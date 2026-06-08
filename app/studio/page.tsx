@@ -191,20 +191,32 @@ export default function StudioPage() {
     const abort = new AbortController()
     abortRef.current = abort
 
-    // Upload front photo
-    const fd1 = new FormData()
-    fd1.append('file', frontFile)
-    fd1.append('type', 'originals')
-    const { url: originalPhotoUrl } = await fetch('/api/upload-image', { method: 'POST', body: fd1 }).then(r => r.json())
+    // Bloquear UI inmediatamente antes de cualquier await
+    setWorkspace('processing')
+    setPhotosReceived(0)
+    setAnalysisReceived(false)
 
-    // Upload back photo if provided
+    // Upload photos — si falla aquí volvemos al formulario
+    let originalPhotoUrl: string
     let backPhotoUrl: string | null = null
-    if (backFile) {
-      const fd2 = new FormData()
-      fd2.append('file', backFile)
-      fd2.append('type', 'originals')
-      const res2 = await fetch('/api/upload-image', { method: 'POST', body: fd2 }).then(r => r.json())
-      backPhotoUrl = res2.url
+    try {
+      const fd1 = new FormData()
+      fd1.append('file', frontFile)
+      fd1.append('type', 'originals')
+      const res1 = await fetch('/api/upload-image', { method: 'POST', body: fd1 }).then(r => r.json())
+      originalPhotoUrl = res1.url
+
+      if (backFile) {
+        const fd2 = new FormData()
+        fd2.append('file', backFile)
+        fd2.append('type', 'originals')
+        const res2 = await fetch('/api/upload-image', { method: 'POST', body: fd2 }).then(r => r.json())
+        backPhotoUrl = res2.url
+      }
+    } catch {
+      setWorkspace('empty')
+      toast.error('Error al subir las fotos. Intenta de nuevo.')
+      return
     }
 
     const newItem: SessionItem = {
@@ -224,9 +236,6 @@ export default function StudioPage() {
       return next
     })
     setActiveId(id)
-    setWorkspace('processing')
-    setPhotosReceived(0)
-    setAnalysisReceived(false)
 
     try {
       const res = await fetch('/api/ai/generate', {

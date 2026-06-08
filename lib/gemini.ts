@@ -71,10 +71,8 @@ async function generateTextWithFallback(
   throw lastErr
 }
 
-async function generateOneShot(img: ImageBase64, prompt: string, shotIndex: number, img2?: ImageBase64): Promise<string | null> {
-  const parts = img2
-    ? [makeImagePart(img), makeImagePart(img2), { text: prompt }]
-    : [makeImagePart(img), { text: prompt }]
+async function generateOneShot(img: ImageBase64, prompt: string, shotIndex: number): Promise<string | null> {
+  const parts = [makeImagePart(img), { text: prompt }]
 
   for (const model of IMAGE_MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -92,8 +90,8 @@ async function generateOneShot(img: ImageBase64, prompt: string, shotIndex: numb
           console.warn(`[gemini:img${shotIndex}] timeout on ${model}`)
           break // try next model
         }
-        const parts = r.candidates?.[0]?.content?.parts ?? []
-        for (const part of parts) {
+        const responseParts = r.candidates?.[0]?.content?.parts ?? []
+        for (const part of responseParts) {
           if ((part as any).inlineData?.data) {
             const { mimeType, data } = (part as any).inlineData
             console.log(`[gemini:img${shotIndex}] success with ${model}`)
@@ -135,13 +133,13 @@ export async function detectGender(img: ImageBase64): Promise<string> {
 }
 
 // Build studio base prompt with the correct mannequin sex
-function makeStudioBase(gender: string): string {
+function makeStudioBase(gender: string, hasBackPhoto = false): string {
   const mannequinDesc =
     gender === 'Niño/a'
       ? 'CHILD — smaller frame, child-sized proportions, shorter stature'
       : gender === 'Mujer'
-      ? 'FEMALE — feminine proportions: narrower shoulders, defined waist, curved hips, female body shape'
-      : 'MALE — masculine proportions: broader shoulders, flat chest, straight hips, male body shape' // Hombre + Unisex → always male
+      ? 'FEMALE — fitted feminine silhouette: narrower shoulders, defined waist'
+      : 'MALE — fitted masculine silhouette: broader shoulders, straight frame'
 
   return `Generate a professional fashion editorial photograph using the provided clothing image as the exact reference for the garment.
 
@@ -151,7 +149,7 @@ INVISIBLE LIGHTS: The lighting is achieved by off-camera invisible light sources
 
 GARMENT FIDELITY — non-negotiable: reproduce every single detail of the garment faithfully: exact colors, fabric texture, weave, seams, stitching, prints, patterns, embroidery, buttons, zippers, cut, silhouette. Do not alter, smooth or invent any garment detail.
 
-MANNEQUIN SEX: ${mannequinDesc}. This is mandatory — the ghost silhouette must have exactly these proportions and sex characteristics throughout the entire image.
+MANNEQUIN SILHOUETTE: ${mannequinDesc}. The ghost figure must consistently reflect these proportions throughout the entire image.
 
 GHOST SILHOUETTE — full body phantom:
 The garment is worn by a full-body semi-transparent ghost/phantom silhouette visible from head to feet. The ghost body and ALL clothing worn by the ghost are made of the same uniform semi-transparent frosted-glass material — translucent throughout.
@@ -161,11 +159,13 @@ THE GARMENT ITSELF must be fully opaque, sharp, and crisp — it is the only sol
 
 BACKGROUND: Plain light gray seamless gradient — clean empty background with nothing in it. No objects, no floor lines, no studio walls, no equipment, no props — only the smooth gradient and the figure.
 
-COMPOSITION: Vertical portrait format, 3:4 aspect ratio. Generous breathing room on all sides. Sharp focus on garment.`
+COMPOSITION: Vertical portrait format, 3:4 aspect ratio. Generous breathing room on all sides. Sharp focus on garment.${hasBackPhoto ? `
+
+REFERENCE IMAGE NOTE: The input image is a SPLIT COMPOSITE — LEFT HALF = front of the garment, RIGHT HALF = back of the garment. Both halves show the same piece. Use both to fully understand the garment before generating.` : ''}`
 }
 
-function makeGhostMannequinShots(gender: string): string[] {
-  const base = makeStudioBase(gender)
+function makeGhostMannequinShots(gender: string, hasBackPhoto = false): string[] {
+  const base = makeStudioBase(gender, hasBackPhoto)
   return [
     `${base}
 
@@ -230,25 +230,25 @@ export async function generateGhostMannequinShot(
   img: ImageBase64,
   shotIndex: number,
   gender = 'Unisex',
-  img2?: ImageBase64
+  hasBackPhoto = false
 ): Promise<string | null> {
-  const shots = makeGhostMannequinShots(gender)
+  const shots = makeGhostMannequinShots(gender, hasBackPhoto)
   const prompt = shots[shotIndex]
   if (!prompt) return null
-  return generateOneShot(img, prompt, shotIndex, img2)
+  return generateOneShot(img, prompt, shotIndex)
 }
 
 export async function generateGhostMannequinStreaming(
   img: ImageBase64,
   onImage: (dataUrl: string, shotIndex: number) => Promise<void>,
   gender = 'Unisex',
-  img2?: ImageBase64
+  hasBackPhoto = false
 ): Promise<void> {
-  const shots = makeGhostMannequinShots(gender)
-  console.log(`[gemini] starting 3 shots in parallel (gender: ${gender})`)
+  const shots = makeGhostMannequinShots(gender, hasBackPhoto)
+  console.log(`[gemini] starting 3 shots in parallel (gender: ${gender}, hasBack: ${hasBackPhoto})`)
   await Promise.allSettled(
     shots.map(async (prompt, i) => {
-      const dataUrl = await generateOneShot(img, prompt, i, img2)
+      const dataUrl = await generateOneShot(img, prompt, i)
       if (dataUrl) await onImage(dataUrl, i)
     })
   )

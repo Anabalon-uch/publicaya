@@ -29,6 +29,25 @@ async function readAndResize(imageUrl: string): Promise<{ mimeType: string; data
   return { mimeType: 'image/jpeg', data: resized.toString('base64') }
 }
 
+// Anverso (izquierda) + reverso (derecha) en una sola imagen para el modelo generador
+async function compositeForGeneration(
+  img: { mimeType: string; data: string },
+  img2: { mimeType: string; data: string }
+): Promise<{ mimeType: string; data: string }> {
+  const SIDE = 512
+  const H = Math.round(SIDE * 4 / 3)
+  const bg = { r: 230, g: 230, b: 230 }
+  const [r1, r2] = await Promise.all([
+    sharp(Buffer.from(img.data, 'base64')).resize(SIDE, H, { fit: 'contain', background: bg }).jpeg({ quality: 85 }).toBuffer(),
+    sharp(Buffer.from(img2.data, 'base64')).resize(SIDE, H, { fit: 'contain', background: bg }).jpeg({ quality: 85 }).toBuffer(),
+  ])
+  const combined = await sharp({ create: { width: SIDE * 2, height: H, channels: 3, background: bg } })
+    .composite([{ input: r1, left: 0, top: 0 }, { input: r2, left: SIDE, top: 0 }])
+    .jpeg({ quality: 85 })
+    .toBuffer()
+  return { mimeType: 'image/jpeg', data: combined.toString('base64') }
+}
+
 export async function POST(request: NextRequest) {
   const { imageUrl, imageUrl2, mode = 'all', shotIndex, gender: clientGender } = await request.json() as {
     imageUrl: string
@@ -47,6 +66,11 @@ export async function POST(request: NextRequest) {
     async start(controller) {
       const send = (data: object) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+
+      const keepAlive = setInterval(
+        () => controller.enqueue(encoder.encode(': keepalive\n\n')),
+        15_000
+      )
 
       const saveImage = async (dataUrl: string): Promise<string> => {
         const base64Data = dataUrl.split(',')[1]
@@ -67,7 +91,8 @@ export async function POST(request: NextRequest) {
         if (mode === 'photo') {
           const gender = clientGender || 'Unisex'
           const idx = shotIndex ?? 0
-          const dataUrl = await generateGhostMannequinShot(img, idx, gender, img2)
+          const imgForGen = img2 ? await compositeForGeneration(img, img2) : img
+          const dataUrl = await generateGhostMannequinShot(imgForGen, idx, gender, !!img2)
           if (dataUrl) {
             const url = await saveImage(dataUrl)
             if (url) send({ type: 'photo', url, shotIndex: idx })
@@ -80,12 +105,13 @@ export async function POST(request: NextRequest) {
           // 'all' — gender comes from client, no detection needed
           const gender = clientGender || 'Unisex'
           console.log(`[generate] gender=${gender}, starting photos + analysis`)
+          const imgForGen = img2 ? await compositeForGeneration(img, img2) : img
 
           await Promise.allSettled([
-            generateGhostMannequinStreaming(img, async (dataUrl, idx) => {
+            generateGhostMannequinStreaming(imgForGen, async (dataUrl, idx) => {
               const url = await saveImage(dataUrl)
               if (url) send({ type: 'photo', url, shotIndex: idx })
-            }, gender, img2),
+            }, gender, !!img2),
             analyzeClothing(img, img2)
               .then((analysis) => {
                 console.log('[generate] analysis done')
@@ -104,6 +130,7 @@ export async function POST(request: NextRequest) {
         console.error('[generate] fatal error:', err?.message)
         send({ type: 'error' })
       } finally {
+        clearInterval(keepAlive)
         controller.close()
       }
     },
@@ -112,6 +139,8 @@ export async function POST(request: NextRequest) {
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
       'Cache-Control': 'no-cache',
     },
   })

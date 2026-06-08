@@ -3,13 +3,12 @@ import { readFile, writeFile, mkdir } from 'fs/promises'
 import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import sharp from 'sharp'
-import { detectGender, generateGhostMannequinStreaming, generateGhostMannequinShot, analyzeClothing } from '@/lib/gemini'
+import { generateGhostMannequinStreaming, generateGhostMannequinShot, analyzeClothing } from '@/lib/gemini'
 
 export const maxDuration = 180
 
 const MAX_SIDE = 1024
 
-// Pad generated image to exact 3:4 portrait ratio with gray background
 async function padToPortrait(buf: Buffer): Promise<Buffer> {
   const { width = 1024, height = 1024 } = await sharp(buf).metadata()
   const targetH = Math.max(height, Math.round(width * 4 / 3))
@@ -20,9 +19,20 @@ async function padToPortrait(buf: Buffer): Promise<Buffer> {
     .toBuffer()
 }
 
+async function readAndResize(imageUrl: string): Promise<{ mimeType: string; data: string }> {
+  const localPath = path.join(process.cwd(), 'public', imageUrl)
+  const fileBuffer = await readFile(localPath)
+  const resized = await sharp(fileBuffer)
+    .resize(MAX_SIDE, MAX_SIDE, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer()
+  return { mimeType: 'image/jpeg', data: resized.toString('base64') }
+}
+
 export async function POST(request: NextRequest) {
-  const { imageUrl, mode = 'all', shotIndex, gender: clientGender } = await request.json() as {
+  const { imageUrl, imageUrl2, mode = 'all', shotIndex, gender: clientGender } = await request.json() as {
     imageUrl: string
+    imageUrl2?: string | null
     mode?: 'all' | 'photo' | 'description'
     shotIndex?: number
     gender?: string
@@ -49,46 +59,34 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        // Read and resize original photo
-        const localPath = path.join(process.cwd(), 'public', imageUrl)
-        console.log('[generate] reading file:', localPath)
-        const fileBuffer = await readFile(localPath)
-        const resized = await sharp(fileBuffer)
-          .resize(MAX_SIDE, MAX_SIDE, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 85 })
-          .toBuffer()
-
-        const img = { mimeType: 'image/jpeg', data: resized.toString('base64') }
-        console.log(`[generate] mode=${mode} image ready`)
+        console.log('[generate] reading images...')
+        const img = await readAndResize(imageUrl)
+        const img2 = imageUrl2 ? await readAndResize(imageUrl2) : undefined
+        console.log(`[generate] mode=${mode}, img2=${!!img2}, gender=${clientGender}`)
 
         if (mode === 'photo') {
-          // Regenerate a single shot — use gender from client (stored in session) or detect
-          const gender = clientGender || await detectGender(img)
+          const gender = clientGender || 'Unisex'
           const idx = shotIndex ?? 0
-          const dataUrl = await generateGhostMannequinShot(img, idx, gender)
+          const dataUrl = await generateGhostMannequinShot(img, idx, gender, img2)
           if (dataUrl) {
             const url = await saveImage(dataUrl)
             if (url) send({ type: 'photo', url, shotIndex: idx })
           }
         } else if (mode === 'description') {
-          // Regenerate description + categories only
-          await analyzeClothing(img)
+          await analyzeClothing(img, img2)
             .then((analysis) => send({ type: 'analysis', analysis }))
             .catch(() => send({ type: 'analysis_error' }))
         } else {
-          // 'all' — full generation
-          // Step 1: detect gender first so photos use the correct mannequin sex
-          const gender = await detectGender(img)
-          send({ type: 'gender', gender })
-          console.log(`[generate] gender detected: ${gender}, starting photos + analysis`)
+          // 'all' — gender comes from client, no detection needed
+          const gender = clientGender || 'Unisex'
+          console.log(`[generate] gender=${gender}, starting photos + analysis`)
 
-          // Step 2: photos (with correct gender) + full analysis in parallel
           await Promise.allSettled([
             generateGhostMannequinStreaming(img, async (dataUrl, idx) => {
               const url = await saveImage(dataUrl)
               if (url) send({ type: 'photo', url, shotIndex: idx })
-            }, gender),
-            analyzeClothing(img)
+            }, gender, img2),
+            analyzeClothing(img, img2)
               .then((analysis) => {
                 console.log('[generate] analysis done')
                 send({ type: 'analysis', analysis })

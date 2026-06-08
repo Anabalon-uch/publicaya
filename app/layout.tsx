@@ -6,8 +6,8 @@ import "./globals.css";
 const geist = Geist({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Clothing Studio",
-  description: "Genera fotos profesionales, descripción y categorías para tus prendas",
+  title: "PublicaYa",
+  description: "Genera fotos profesionales, descripción y categorías para tus prendas con IA",
 };
 
 export default function RootLayout({

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { toast } from 'sonner'
+import { Menu, Shirt } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { SessionSidebar } from '@/components/studio/session-sidebar'
@@ -25,6 +26,7 @@ export default function StudioPage() {
   const [analysisReceived, setAnalysisReceived] = useState(false)
   const [regeneratingIndices, setRegeneratingIndices] = useState<number[]>([])
   const [isRegeneratingDescription, setIsRegeneratingDescription] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -76,7 +78,6 @@ export default function StudioPage() {
     })
   }, [activeId])
 
-  // Shared SSE reader — used by both regen handlers
   const readSSE = useCallback(async (
     res: Response,
     onPhoto: (url: string, shotIndex: number) => void,
@@ -107,7 +108,6 @@ export default function StudioPage() {
     if (!id || !item) return
 
     setRegeneratingIndices((prev) => [...prev, shotIndex])
-    // Clear the slot while regenerating
     setItems((prev) => {
       const next = prev.map((i) => {
         if (i.id !== id) return i
@@ -125,6 +125,7 @@ export default function StudioPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageUrl: item.originalPhotoUrl,
+          imageUrl2: item.backPhotoUrl ?? null,
           mode: 'photo',
           shotIndex,
           gender: item.categories.genero || 'Unisex',
@@ -159,7 +160,11 @@ export default function StudioPage() {
       const res = await fetch('/api/ai/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageUrl: item.originalPhotoUrl, mode: 'description' }),
+        body: JSON.stringify({
+          imageUrl: item.originalPhotoUrl,
+          imageUrl2: item.backPhotoUrl ?? null,
+          mode: 'description',
+        }),
       })
       await readSSE(res, () => {}, (analysis) => {
         setItems((prev) => {
@@ -180,26 +185,36 @@ export default function StudioPage() {
     }
   }, [activeId, items, readSSE])
 
-  const handleGenerate = useCallback(async (file: File) => {
+  const handleGenerate = useCallback(async (frontFile: File, backFile: File | null, gender: string) => {
     const id = uuidv4()
     abortRef.current?.abort()
     const abort = new AbortController()
     abortRef.current = abort
 
-    // Upload original
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('type', 'originals')
-    const uploadRes = await fetch('/api/upload-image', { method: 'POST', body: formData })
-    const { url: originalPhotoUrl } = await uploadRes.json()
+    // Upload front photo
+    const fd1 = new FormData()
+    fd1.append('file', frontFile)
+    fd1.append('type', 'originals')
+    const { url: originalPhotoUrl } = await fetch('/api/upload-image', { method: 'POST', body: fd1 }).then(r => r.json())
+
+    // Upload back photo if provided
+    let backPhotoUrl: string | null = null
+    if (backFile) {
+      const fd2 = new FormData()
+      fd2.append('file', backFile)
+      fd2.append('type', 'originals')
+      const res2 = await fetch('/api/upload-image', { method: 'POST', body: fd2 }).then(r => r.json())
+      backPhotoUrl = res2.url
+    }
 
     const newItem: SessionItem = {
       id,
       name: '',
       originalPhotoUrl,
+      backPhotoUrl,
       ghostPhotoUrls: [null, null, null],
       description: '',
-      categories: { genero: '', tipo: '', estilo: [], ocasion: [], temporada: '', colores: [] },
+      categories: { genero: gender, tipo: '', estilo: [], ocasion: [], temporada: '', colores: [] },
       status: 'processing',
     }
 
@@ -217,7 +232,7 @@ export default function StudioPage() {
       const res = await fetch('/api/ai/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageUrl: originalPhotoUrl }),
+        body: JSON.stringify({ imageUrl: originalPhotoUrl, imageUrl2: backPhotoUrl, gender }),
         signal: abort.signal,
       })
 
@@ -236,18 +251,6 @@ export default function StudioPage() {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           const event = JSON.parse(line.slice(6))
-
-          if (event.type === 'gender') {
-            const detectedGender = event.gender as string
-            setItems((prev) => {
-              const next = prev.map((i) => i.id !== id ? i : {
-                ...i,
-                categories: { ...i.categories, genero: detectedGender },
-              })
-              saveSession(next)
-              return next
-            })
-          }
 
           if (event.type === 'photo') {
             const shotIndex = event.shotIndex as number
@@ -272,7 +275,7 @@ export default function StudioPage() {
                 ...i,
                 name: analysis.name,
                 description: analysis.description,
-                categories: analysis.categories,
+                categories: { ...analysis.categories, genero: gender },
               })
               saveSession(next)
               return next
@@ -338,12 +341,28 @@ export default function StudioPage() {
 
     zip.file('datos.json', JSON.stringify(datos, null, 2))
     const blob = await zip.generateAsync({ type: 'blob' })
-    saveAs(blob, `clothing-studio-export.zip`)
+    saveAs(blob, `publicaya-export.zip`)
     toast.success(`Exportadas ${done.length} prendas`)
   }, [items])
 
   return (
-    <div className="flex h-screen overflow-hidden bg-white">
+    <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-white">
+      {/* Mobile header */}
+      <header className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-zinc-200 bg-zinc-50 flex-shrink-0">
+        <Shirt className="w-5 h-5 text-zinc-700" />
+        <span className="font-semibold text-zinc-900 text-sm flex-1">PublicaYa</span>
+        <button
+          onClick={() => setMobileMenuOpen(true)}
+          className="p-1.5 text-zinc-500 hover:text-zinc-800 relative"
+          aria-label="Historial"
+        >
+          <Menu className="w-5 h-5" />
+          {items.length > 0 && (
+            <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-zinc-700 rounded-full" />
+          )}
+        </button>
+      </header>
+
       <SessionSidebar
         items={items}
         activeId={activeId}
@@ -351,15 +370,17 @@ export default function StudioPage() {
         onNew={handleNew}
         onExport={handleExport}
         onDelete={handleDelete}
+        mobileOpen={mobileMenuOpen}
+        onMobileClose={() => setMobileMenuOpen(false)}
       />
 
       <main className="flex-1 overflow-y-auto">
         {workspace === 'empty' && (
-          <div className="flex flex-col items-center justify-center h-full p-8">
+          <div className="flex flex-col items-center justify-center min-h-full p-6">
             <div className="w-full max-w-md">
               <h2 className="text-xl font-semibold text-zinc-800 mb-1 text-center">Nueva prenda</h2>
               <p className="text-zinc-500 text-sm text-center mb-8">
-                Sube una foto de la prenda y la IA generará fotos profesionales, descripción y categorías automáticamente
+                Sube fotos de la prenda y la IA generará fotos profesionales, descripción y categorías
               </p>
               <UploadZone onGenerate={handleGenerate} />
             </div>
@@ -367,13 +388,13 @@ export default function StudioPage() {
         )}
 
         {workspace === 'processing' && (
-          <div className="flex items-center justify-center h-full p-8">
+          <div className="flex items-center justify-center min-h-full p-8">
             <ProcessingView photosReceived={photosReceived} analysisReceived={analysisReceived} />
           </div>
         )}
 
         {workspace === 'results' && activeItem && (
-          <div className="p-6 max-w-3xl mx-auto">
+          <div className="p-4 md:p-6 max-w-3xl mx-auto">
             <div className="mb-6">
               <label className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-1.5 block">
                 Nombre de la prenda
@@ -389,6 +410,7 @@ export default function StudioPage() {
             <div className="flex flex-col gap-10">
               <ResultsPhotos
                 originalUrl={activeItem.originalPhotoUrl}
+                backUrl={activeItem.backPhotoUrl}
                 ghostUrls={activeItem.ghostPhotoUrls}
                 isProcessing={activeItem.status === 'processing'}
                 regeneratingIndices={regeneratingIndices}

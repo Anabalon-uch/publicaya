@@ -2,6 +2,7 @@ export interface SessionItem {
   id: string
   name: string
   originalPhotoUrl: string
+  backPhotoUrl?: string | null
   ghostPhotoUrls: (string | null)[]
   description: string
   categories: {

@@ -1,110 +1,145 @@
 'use client'
 
 import { useCallback, useState } from 'react'
-import { Upload, ImagePlus } from 'lucide-react'
+import { ImagePlus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
+const GENDERS = ['Mujer', 'Hombre', 'Unisex', 'Niño/a'] as const
+type Gender = (typeof GENDERS)[number]
+
 interface UploadZoneProps {
-  onGenerate: (file: File) => void
+  onGenerate: (frontFile: File, backFile: File | null, gender: Gender) => void
+}
+
+interface PhotoSlotProps {
+  label: string
+  required?: boolean
+  preview: string | null
+  onFile: (f: File) => void
+  onClear: () => void
+  inputId: string
+}
+
+function PhotoSlot({ label, required, preview, onFile, onClear, inputId }: PhotoSlotProps) {
+  const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f && f.type.startsWith('image/')) onFile(f)
+    e.target.value = ''
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+      <div className="flex items-center gap-1">
+        <span className="text-xs font-medium text-zinc-600">{label}</span>
+        {required
+          ? <span className="text-xs text-red-400">*</span>
+          : <span className="text-xs text-zinc-400">(opcional)</span>}
+      </div>
+      <div
+        className={cn(
+          'relative rounded-xl border-2 border-dashed cursor-pointer overflow-hidden bg-zinc-50 aspect-[3/4] w-full transition-colors',
+          preview ? 'border-zinc-300' : 'border-zinc-300 hover:border-zinc-500 active:border-zinc-700'
+        )}
+        onClick={() => document.getElementById(inputId)?.click()}
+      >
+        {preview ? (
+          <>
+            <img src={preview} alt={label} className="w-full h-full object-contain" />
+            <button
+              onClick={(e) => { e.stopPropagation(); onClear() }}
+              className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-7 h-7 flex items-center justify-center transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </>
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-400 p-2">
+            <ImagePlus className="w-8 h-8" />
+            <p className="text-xs text-center leading-tight">Toca para seleccionar</p>
+          </div>
+        )}
+      </div>
+      <input
+        id={inputId}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleInput}
+      />
+    </div>
+  )
 }
 
 export function UploadZone({ onGenerate }: UploadZoneProps) {
-  const [preview, setPreview] = useState<string | null>(null)
-  const [file, setFile] = useState<File | null>(null)
-  const [dragging, setDragging] = useState(false)
+  const [frontFile, setFrontFile] = useState<File | null>(null)
+  const [frontPreview, setFrontPreview] = useState<string | null>(null)
+  const [backFile, setBackFile] = useState<File | null>(null)
+  const [backPreview, setBackPreview] = useState<string | null>(null)
+  const [gender, setGender] = useState<Gender>('Mujer')
 
-  const handleFile = useCallback((f: File) => {
-    if (!f.type.startsWith('image/')) return
+  const loadFile = useCallback((
+    setFile: (f: File | null) => void,
+    setPreview: (p: string | null) => void
+  ) => (f: File) => {
     setFile(f)
     const reader = new FileReader()
     reader.onload = (e) => setPreview(e.target?.result as string)
     reader.readAsDataURL(f)
   }, [])
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setDragging(false)
-    const f = e.dataTransfer.files[0]
-    if (f) handleFile(f)
-  }, [handleFile])
-
-  const handleInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (f) handleFile(f)
-  }, [handleFile])
-
-  const handleGenerate = useCallback(() => {
-    if (file) onGenerate(file)
-  }, [file, onGenerate])
+  const clearSlot = useCallback((
+    setFile: (f: File | null) => void,
+    setPreview: (p: string | null) => void
+  ) => () => { setFile(null); setPreview(null) }, [])
 
   return (
-    <div className="flex flex-col items-center gap-6 w-full max-w-xl mx-auto">
-      <div
-        onDrop={handleDrop}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-        onDragLeave={() => setDragging(false)}
-        className={cn(
-          'relative w-full aspect-square rounded-2xl border-2 border-dashed transition-all cursor-pointer overflow-hidden bg-zinc-50',
-          dragging ? 'border-zinc-900 bg-zinc-100' : 'border-zinc-300 hover:border-zinc-400'
-        )}
-        onClick={() => !preview && document.getElementById('file-input')?.click()}
-      >
-        {preview ? (
-          <img src={preview} alt="Prenda" className="w-full h-full object-contain" />
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-zinc-400">
-            <ImagePlus className="w-12 h-12" />
-            <p className="text-sm font-medium">Arrastra una foto de la prenda aquí</p>
-            <p className="text-xs">o haz click para seleccionar</p>
-          </div>
-        )}
-
-        {preview && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setPreview(null); setFile(null) }}
-            className="absolute top-3 right-3 bg-black/60 hover:bg-black/80 text-white rounded-full w-7 h-7 flex items-center justify-center text-sm transition-colors"
-          >
-            ✕
-          </button>
-        )}
+    <div className="flex flex-col gap-6 w-full max-w-sm mx-auto">
+      <div className="flex gap-3">
+        <PhotoSlot
+          label="Frontal"
+          required
+          preview={frontPreview}
+          onFile={loadFile(setFrontFile, setFrontPreview)}
+          onClear={clearSlot(setFrontFile, setFrontPreview)}
+          inputId="upload-front"
+        />
+        <PhotoSlot
+          label="Trasera"
+          preview={backPreview}
+          onFile={loadFile(setBackFile, setBackPreview)}
+          onClear={clearSlot(setBackFile, setBackPreview)}
+          inputId="upload-back"
+        />
       </div>
 
-      <input
-        id="file-input"
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleInput}
-      />
-
-      {preview ? (
-        <div className="flex gap-3 w-full">
-          <Button
-            variant="outline"
-            className="flex-1"
-            onClick={() => document.getElementById('file-input')?.click()}
-          >
-            <Upload className="w-4 h-4 mr-2" />
-            Cambiar foto
-          </Button>
-          <Button
-            className="flex-1 bg-zinc-900 hover:bg-zinc-700 text-white"
-            onClick={handleGenerate}
-          >
-            Generar contenido
-          </Button>
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-medium text-zinc-600">Género del maniquí</p>
+        <div className="grid grid-cols-4 gap-2">
+          {GENDERS.map((g) => (
+            <button
+              key={g}
+              onClick={() => setGender(g)}
+              className={cn(
+                'py-2 px-1 text-xs rounded-lg border font-medium transition-colors',
+                gender === g
+                  ? 'border-zinc-900 bg-zinc-900 text-white'
+                  : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-400'
+              )}
+            >
+              {g}
+            </button>
+          ))}
         </div>
-      ) : (
-        <Button
-          variant="outline"
-          className="w-full"
-          onClick={() => document.getElementById('file-input')?.click()}
-        >
-          <Upload className="w-4 h-4 mr-2" />
-          Seleccionar foto
-        </Button>
-      )}
+      </div>
+
+      <Button
+        disabled={!frontFile}
+        className="w-full bg-zinc-900 hover:bg-zinc-700 text-white disabled:opacity-50"
+        onClick={() => frontFile && onGenerate(frontFile, backFile, gender)}
+      >
+        Generar contenido
+      </Button>
     </div>
   )
 }

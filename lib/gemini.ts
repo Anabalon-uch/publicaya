@@ -36,9 +36,12 @@ function makeImagePart(img: ImageBase64) {
 
 async function generateTextWithFallback(
   img: ImageBase64,
-  textPrompt: string
+  textPrompt: string,
+  img2?: ImageBase64
 ): Promise<string> {
-  const imagePart = makeImagePart(img)
+  const parts = img2
+    ? [makeImagePart(img), makeImagePart(img2), { text: textPrompt }]
+    : [makeImagePart(img), { text: textPrompt }]
   let lastErr: unknown
 
   for (const model of TEXT_MODELS) {
@@ -47,7 +50,7 @@ async function generateTextWithFallback(
       const r = await withTimeout(
         ai.models.generateContent({
           model,
-          contents: [{ role: 'user', parts: [imagePart, { text: textPrompt }] }],
+          contents: [{ role: 'user', parts }],
         }),
         30_000
       )
@@ -68,8 +71,10 @@ async function generateTextWithFallback(
   throw lastErr
 }
 
-async function generateOneShot(img: ImageBase64, prompt: string, shotIndex: number): Promise<string | null> {
-  const imagePart = makeImagePart(img)
+async function generateOneShot(img: ImageBase64, prompt: string, shotIndex: number, img2?: ImageBase64): Promise<string | null> {
+  const parts = img2
+    ? [makeImagePart(img), makeImagePart(img2), { text: prompt }]
+    : [makeImagePart(img), { text: prompt }]
 
   for (const model of IMAGE_MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -78,7 +83,7 @@ async function generateOneShot(img: ImageBase64, prompt: string, shotIndex: numb
         const r = await withTimeout(
           ai.models.generateContent({
             model,
-            contents: [{ role: 'user', parts: [imagePart, { text: prompt }] }],
+            contents: [{ role: 'user', parts }],
             config: { responseModalities: ['IMAGE'] },
           }),
           SHOT_TIMEOUT_MS
@@ -200,7 +205,7 @@ export interface ClothingAnalysis {
   }
 }
 
-export async function analyzeClothing(img: ImageBase64): Promise<ClothingAnalysis> {
+export async function analyzeClothing(img: ImageBase64, img2?: ImageBase64): Promise<ClothingAnalysis> {
   const prompt = `Analyze this clothing photo and return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:
 {
   "name": "short product name in Spanish (e.g. 'Vestido floral manga larga')",
@@ -215,7 +220,7 @@ export async function analyzeClothing(img: ImageBase64): Promise<ClothingAnalysi
   }
 }`
 
-  const text = await generateTextWithFallback(img, prompt)
+  const text = await generateTextWithFallback(img, prompt, img2)
   const cleaned = text.replace(/```json\n?|\n?```/g, '').trim()
   return JSON.parse(cleaned)
 }
@@ -224,24 +229,26 @@ export async function analyzeClothing(img: ImageBase64): Promise<ClothingAnalysi
 export async function generateGhostMannequinShot(
   img: ImageBase64,
   shotIndex: number,
-  gender = 'Unisex'
+  gender = 'Unisex',
+  img2?: ImageBase64
 ): Promise<string | null> {
   const shots = makeGhostMannequinShots(gender)
   const prompt = shots[shotIndex]
   if (!prompt) return null
-  return generateOneShot(img, prompt, shotIndex)
+  return generateOneShot(img, prompt, shotIndex, img2)
 }
 
 export async function generateGhostMannequinStreaming(
   img: ImageBase64,
   onImage: (dataUrl: string, shotIndex: number) => Promise<void>,
-  gender = 'Unisex'
+  gender = 'Unisex',
+  img2?: ImageBase64
 ): Promise<void> {
   const shots = makeGhostMannequinShots(gender)
   console.log(`[gemini] starting 3 shots in parallel (gender: ${gender})`)
   await Promise.allSettled(
     shots.map(async (prompt, i) => {
-      const dataUrl = await generateOneShot(img, prompt, i)
+      const dataUrl = await generateOneShot(img, prompt, i, img2)
       if (dataUrl) await onImage(dataUrl, i)
     })
   )

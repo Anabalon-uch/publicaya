@@ -1,6 +1,6 @@
 'use client'
 
-import { Plus, Download, Shirt, CheckCircle, Loader2, AlertCircle, Trash2 } from 'lucide-react'
+import { Plus, Download, Shirt, CheckCircle, Loader2, AlertCircle, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -14,6 +14,8 @@ interface SessionSidebarProps {
   onNew: () => void
   onExport: () => void
   onDelete: (id: string) => void
+  mobileOpen?: boolean
+  onMobileClose?: () => void
 }
 
 const StatusIcon = ({ status }: { status: SessionItem['status'] }) => {
@@ -23,22 +25,37 @@ const StatusIcon = ({ status }: { status: SessionItem['status'] }) => {
   return <Shirt className="w-3.5 h-3.5 text-zinc-300 flex-shrink-0" />
 }
 
-export function SessionSidebar({ items, activeId, onSelect, onNew, onExport, onDelete }: SessionSidebarProps) {
+function SidebarContent({
+  items,
+  activeId,
+  onSelect,
+  onNew,
+  onExport,
+  onDelete,
+  onClose,
+}: SessionSidebarProps & { onClose?: () => void }) {
   const doneCount = items.filter((i) => i.status === 'done').length
 
   return (
-    <aside className="w-64 flex-shrink-0 border-r border-zinc-200 bg-zinc-50 flex flex-col h-full">
-      <div className="p-4 border-b border-zinc-200">
-        <div className="flex items-center gap-2 mb-1">
-          <Shirt className="w-5 h-5 text-zinc-700" />
-          <h1 className="font-semibold text-zinc-900 text-sm">Clothing Studio</h1>
+    <>
+      <div className="p-4 border-b border-zinc-200 flex items-start justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Shirt className="w-5 h-5 text-zinc-700" />
+            <h1 className="font-semibold text-zinc-900 text-sm">PublicaYa</h1>
+          </div>
+          <p className="text-xs text-zinc-400">{items.length} prenda{items.length !== 1 ? 's' : ''} en sesión</p>
         </div>
-        <p className="text-xs text-zinc-400">{items.length} prenda{items.length !== 1 ? 's' : ''} en sesión</p>
+        {onClose && (
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 mt-0.5">
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <div className="p-3">
         <Button
-          onClick={onNew}
+          onClick={() => { onNew(); onClose?.() }}
           className="w-full justify-start bg-zinc-900 hover:bg-zinc-700 text-white h-9 text-sm"
           size="sm"
         >
@@ -57,7 +74,7 @@ export function SessionSidebar({ items, activeId, onSelect, onNew, onExport, onD
             {items.map((item) => (
               <div
                 key={item.id}
-                onClick={() => onSelect(item.id)}
+                onClick={() => { onSelect(item.id); onClose?.() }}
                 className={cn(
                   'group flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors text-left',
                   activeId === item.id
@@ -113,6 +130,29 @@ export function SessionSidebar({ items, activeId, onSelect, onNew, onExport, onD
           </div>
         </>
       )}
-    </aside>
+    </>
+  )
+}
+
+export function SessionSidebar(props: SessionSidebarProps) {
+  const { mobileOpen, onMobileClose } = props
+
+  return (
+    <>
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex w-64 flex-shrink-0 border-r border-zinc-200 bg-zinc-50 flex-col h-full">
+        <SidebarContent {...props} />
+      </aside>
+
+      {/* Mobile overlay */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-black/40" onClick={onMobileClose} />
+          <aside className="absolute left-0 top-0 bottom-0 w-72 bg-zinc-50 shadow-xl flex flex-col">
+            <SidebarContent {...props} onClose={onMobileClose} />
+          </aside>
+        </div>
+      )}
+    </>
   )
 }

@@ -1,6 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import { Download, RefreshCw, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 
 interface ResultsPhotosProps {
@@ -16,19 +18,59 @@ const SHOT_LABELS = ['Frontal', 'Ángulo 3/4', 'Trasera / Detalle']
 
 export function ResultsPhotos({ originalUrl, backUrl, ghostUrls, isProcessing, regeneratingIndices, onRegenerate }: ResultsPhotosProps) {
   const availableUrls = ghostUrls.filter((u): u is string => !!u)
+  const [isSaving, setIsSaving] = useState(false)
+
+  const fileName = (i: number) => `foto-${SHOT_LABELS[i]!.toLowerCase().replace(/[\s/]/g, '-')}.jpg`
+
+  // Trigger one-by-one browser downloads (desktop fallback).
+  const downloadIndividually = (photos: { url: string; i: number }[]) => {
+    photos.forEach(({ url, i }, n) => {
+      setTimeout(() => {
+        const a = document.createElement('a')
+        a.href = url
+        a.download = fileName(i)
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      }, n * 300)
+    })
+  }
 
   const handleDownloadAll = async () => {
-    for (let i = 0; i < ghostUrls.length; i++) {
-      const url = ghostUrls[i]
-      if (!url) continue
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `foto-${SHOT_LABELS[i]!.toLowerCase().replace(/[\s/]/g, '-')}.jpg`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      // Small delay so the browser doesn't block multiple downloads
-      await new Promise((r) => setTimeout(r, 200))
+    const photos = ghostUrls
+      .map((url, i) => ({ url, i }))
+      .filter((p): p is { url: string; i: number } => !!p.url)
+    if (photos.length === 0) return
+
+    setIsSaving(true)
+    try {
+      // Fetch the images as File objects so we can offer the native share sheet,
+      // which on mobile lets the user save straight to Photos/Gallery.
+      const files = await Promise.all(
+        photos.map(async ({ url, i }) => {
+          const res = await fetch(url)
+          const blob = await res.blob()
+          return new File([blob], fileName(i), { type: blob.type || 'image/jpeg' })
+        }),
+      )
+
+      if (typeof navigator !== 'undefined' && navigator.canShare?.({ files })) {
+        try {
+          await navigator.share({ files, title: 'Fotos del producto' })
+        } catch (err) {
+          // User dismissed the share sheet — don't fall back to downloads.
+          if ((err as Error)?.name !== 'AbortError') {
+            downloadIndividually(photos)
+          }
+        }
+      } else {
+        // Desktop / unsupported: fall back to individual downloads.
+        downloadIndividually(photos)
+      }
+    } catch {
+      toast.error('No se pudieron preparar las fotos para descargar')
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -43,10 +85,15 @@ export function ResultsPhotos({ originalUrl, backUrl, ghostUrls, isProcessing, r
             variant="outline"
             size="sm"
             onClick={handleDownloadAll}
+            disabled={isSaving}
             className="h-7 px-3 text-xs gap-1.5"
           >
-            <Download className="w-3.5 h-3.5" />
-            Descargar fotos
+            {isSaving ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
+            Guardar fotos
           </Button>
         )}
       </div>
